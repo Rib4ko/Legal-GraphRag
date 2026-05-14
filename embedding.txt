@@ -1,0 +1,113 @@
+import time
+from google.colab import userdata
+from huggingface_hub import InferenceClient
+from qdrant_client import QdrantClient, models
+from qdrant_client.http.models import Distance, VectorParams
+from langchain_text_splitters import MarkdownHeaderTextSplitter
+
+# ---------------------------------------------------------
+# 1. SETTINGS & AUTHENTICATION
+# ---------------------------------------------------------
+HF_TOKEN = userdata.get('HF_TOKEN')
+client = InferenceClient(token=HF_TOKEN)
+MODEL_ID = "BAAI/bge-m3"
+DB_PATH = "./qdrant_legal_db"
+COLLECTION_NAME = "moroccan_legal_corpus"
+
+def get_embedding(text):
+    """Fetches high-quality 1024D vectors for Arabic/French."""
+    try:
+        embedding = client.feature_extraction(text, model=MODEL_ID)
+        return embedding[0] if isinstance(embedding[0], list) else embedding
+    except Exception as e:
+        print(f"⚠️ Hugging Face API Error: {e}")
+        return None
+
+# ---------------------------------------------------------
+# 2. THE UNIFIED LEGAL ENGINE
+# ---------------------------------------------------------
+print("⚖️ Initializing Moroccan Legal Engine...")
+
+# Initialize the client
+q_client = QdrantClient(path=DB_PATH)
+
+try:
+    # --- A. CHECK & CREATE COLLECTION ---
+    collections = q_client.get_collections().collections
+    exists = any(c.name == COLLECTION_NAME for c in collections)
+    
+    if not exists:
+        print(f"📦 Collection '{COLLECTION_NAME}' not found. Initializing now...")
+        q_client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=1024, distance=Distance.COSINE),
+        )
+        
+        # Sample Moroccan Law for the test
+        sample_legal_text = """
+        # تحصيل الضرائب
+        ## المادة الثامنة والستون: استقطاع الضريبة
+        يجب على كل مقيم استقطاع ضريبة من المبالغ المدفوعة لغير المقيمين وفق الأسعار الآتية:
+        1. إيجار: 5%
+        2. أتاوة أو ريع: 15%
+        """
+        
+        splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[("#", "H1"), ("##", "H2")])
+        chunks = splitter.split_text(sample_legal_text)
+        
+        for i, chunk in enumerate(chunks):
+            vector = get_embedding(chunk.page_content)
+            if vector is not None:
+                q_client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=[models.PointStruct(id=i, vector=vector, payload={"text": chunk.page_content})]
+                )
+        print(f"✅ Database initialized and populated with {len(chunks)} chunks.")
+    else:
+        print(f"✅ Collection '{COLLECTION_NAME}' is ready.")
+
+    # --- B. THE MODERN SEARCH (query_points) ---
+    query = "ما هي نسبة الضريبة على الإيجار؟"
+    print(f"\n🔍 Searching for: {query}")
+    
+    query_vec = get_embedding(query)
+    
+    if query_vec is not None:
+        # Dynamic API Checker to guarantee execution
+        if hasattr(q_client, "query_points"):
+            # The Modern Qdrant API (v1.10+)
+            response = q_client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_vec,
+                limit=1
+            )
+            results = response.points
+        elif hasattr(q_client, "search"):
+            # The Legacy Qdrant API Fallback
+            results = q_client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=query_vec,
+                limit=1
+            )
+        else:
+            raise RuntimeError("QdrantClient is missing both 'query_points' and 'search'. Installation is corrupted.")
+
+        # --- C. DISPLAY RESULTS ---
+        if results:
+            print("\n--- ⚖️ TOP LEGAL MATCH ---")
+            for hit in results:
+                # Safely extract payload regardless of the API version used
+                payload = getattr(hit, 'payload', {})
+                score = getattr(hit, 'score', 0)
+                print(f"Match Score: {score:.4f}")
+                print(f"Legal Text:\n{payload.get('text', 'No text found')}")
+        else:
+            print("❌ No matching laws found in the database.")
+
+except Exception as e:
+    print(f"❌ Critical Execution Error: {e}")
+
+finally:
+    # Always release the lock for your next run
+    q_client.close()
+    print("\n🔒 Database session closed safely.")
