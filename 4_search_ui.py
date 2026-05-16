@@ -122,7 +122,7 @@ if query:
             try:
                 expansion_prompt = f"Rewrite this legal question into a comprehensive search query, expanding keywords and synonyms. Keep it in the same language. Return ONLY the rewritten query, nothing else.\nOriginal: {query}"
                 exp_res = llm_client.chat.completions.create(
-                    model="google/gemini-2.0-flash-lite-preview-02-05:free",
+                    model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
                     messages=[{"role": "user", "content": expansion_prompt}]
                 )
                 expanded = exp_res.choices[0].message.content.strip()
@@ -177,7 +177,7 @@ if query:
                             try:
                                 extract_prompt = f"Extract the key legal entities and concepts from this query: {query}"
                                 ent_res = llm_client.beta.chat.completions.parse(
-                                    model="google/gemini-2.0-flash-lite-preview-02-05:free",
+                                    model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
                                     messages=[{"role": "user", "content": extract_prompt}],
                                     response_format=QueryEntities
                                 )

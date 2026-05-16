@@ -69,6 +69,8 @@ llm_client = OpenAI(
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
+import time
+
 def extract_triples(text: str) -> ExtractionResult | None:
     prompt = f"""
     Analyze the following Moroccan legal text and extract key entities and relationships.
@@ -78,16 +80,23 @@ def extract_triples(text: str) -> ExtractionResult | None:
     Text:
     {text}
     """
-    try:
-        response = llm_client.beta.chat.completions.parse(
-            model="google/gemini-2.0-flash-lite-preview-02-05:free",
-            messages=[{"role": "user", "content": prompt}],
-            response_format=ExtractionResult
-        )
-        return response.choices[0].message.parsed
-    except Exception as e:
-        print(f"  ⚠️ Extraction failed: {e}")
-        return None
+    retries = 3
+    for attempt in range(retries):
+        try:
+            response = llm_client.beta.chat.completions.parse(
+                model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+                messages=[{"role": "user", "content": prompt}],
+                response_format=ExtractionResult
+            )
+            return response.choices[0].message.parsed
+        except Exception as e:
+            if "429" in str(e) or "rate limit" in str(e).lower():
+                print(f"  ⚠️ Rate limit hit. Waiting 20s (attempt {attempt+1}/{retries})...")
+                time.sleep(20)
+            else:
+                print(f"  ⚠️ Extraction failed: {e}")
+                return None
+    return None
 
 def upsert_to_neo4j(doc_title: str, chunk_id: int, chunk_text: str, extraction: ExtractionResult):
     with driver.session() as session:
@@ -142,12 +151,21 @@ def main():
     
     files = indexer.load_markdown_files(INPUT_DIR)
     
+    progress_file = Path("data/graph_progress.txt")
+    processed_chunks = set()
+    if progress_file.exists():
+        processed_chunks = set(progress_file.read_text().splitlines())
+        print(f"🔄 Resuming extraction. Found {len(processed_chunks)} already processed chunks.")
+    
     for filename, content in files:
         print(f"\n📄 Processing Graph for: {filename}")
         chunks = indexer.chunk_document(content)
         
         for i, chunk in enumerate(chunks):
             chunk_id = indexer.make_point_id(filename, i)
+            if chunk_id in processed_chunks:
+                continue
+                
             text = chunk["content"]
             
             print(f"  🧠 Extracting triples for chunk {i}...")
@@ -156,6 +174,10 @@ def main():
             if extraction:
                 upsert_to_neo4j(filename, chunk_id, text, extraction)
                 print(f"  ✅ Upserted {len(extraction.entities)} entities and {len(extraction.relationships)} relationships.")
+                
+                # Save progress
+                with open(progress_file, "a") as f:
+                    f.write(str(chunk_id) + "\n")
                 
     print("\n✅ Graph extraction complete!")
     driver.close()
