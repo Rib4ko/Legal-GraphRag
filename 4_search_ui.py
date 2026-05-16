@@ -115,7 +115,24 @@ query = st.text_input("Enter your legal question:", placeholder="مثال: ما 
 
 if query:
     with st.spinner("Searching the database..."):
-        query_vec = get_embedding(query)
+        search_query = query
+        
+        # 0. Query Expansion
+        if llm_client:
+            try:
+                expansion_prompt = f"Rewrite this legal question into a comprehensive search query, expanding keywords and synonyms. Keep it in the same language. Return ONLY the rewritten query, nothing else.\nOriginal: {query}"
+                exp_res = llm_client.chat.completions.create(
+                    model="google/gemini-2.0-flash-lite-preview-02-05:free",
+                    messages=[{"role": "user", "content": expansion_prompt}]
+                )
+                expanded = exp_res.choices[0].message.content.strip()
+                if expanded:
+                    search_query = expanded
+                    st.info(f"🔍 Expanded Search Query: {search_query}")
+            except Exception as e:
+                pass # Fail silently and use original query
+                
+        query_vec = get_embedding(search_query)
         
         if query_vec is not None:
             try:
@@ -160,24 +177,26 @@ if query:
                             try:
                                 extract_prompt = f"Extract the key legal entities and concepts from this query: {query}"
                                 ent_res = llm_client.beta.chat.completions.parse(
-                                    model="openai/gpt-4o-mini",
+                                    model="google/gemini-2.0-flash-lite-preview-02-05:free",
                                     messages=[{"role": "user", "content": extract_prompt}],
                                     response_format=QueryEntities
                                 )
-                                query_entities = ent_res.choices[0].message.parsed.entities
+                                parsed_msg = ent_res.choices[0].message.parsed
+                                query_entities = parsed_msg.entities if parsed_msg else []
                                 
                                 # 2. Query Neo4j for these entities
                                 if query_entities:
                                     with neo4j_client.session() as session:
                                         cypher = """
                                         UNWIND $entities AS ent
-                                        MATCH (e:Entity) WHERE e.name CONTAINS ent
-                                        MATCH (e)<-[r]-(c:Chunk)
-                                        RETURN e.name AS entity, type(r) AS relation, c.text AS chunk_text
-                                        LIMIT 5
+                                        CALL db.index.fulltext.queryNodes("entity_name_index", ent) YIELD node AS e, score
+                                        MATCH (e)-[r]-(related:Entity)
+                                        RETURN e.name AS entity, type(r) AS relation, related.name AS related_entity, score
+                                        ORDER BY score DESC
+                                        LIMIT 10
                                         """
                                         res = session.run(cypher, entities=query_entities)
-                                        graph_lines = [f"Graph Knowledge: '{record['entity']}' is {record['relation']} by chunk: {record['chunk_text'][:200]}..." for record in res]
+                                        graph_lines = [f"Graph Knowledge: '{record['entity']}' {record['relation']} '{record['related_entity']}'" for record in res]
                                         if graph_lines:
                                             graph_context = "### Graph Relationships:\n" + "\n".join(graph_lines)
                             except Exception as e:
@@ -200,7 +219,7 @@ User Question: {query}"""
                             message_placeholder = st.empty()
                             try:
                                 response = llm_client.chat.completions.create(
-                                    model="openai/gpt-4o-mini",
+                                    model="meta-llama/llama-3.3-70b-instruct:free",
                                     messages=[{"role": "user", "content": prompt}],
                                     stream=True
                                 )

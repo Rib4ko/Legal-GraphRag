@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import Distance, VectorParams
-from langchain_text_splitters import MarkdownHeaderTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 # Fix Windows terminal encoding for emoji/Arabic
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -113,7 +113,13 @@ def chunk_document(text: str) -> list[dict]:
     splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=HEADERS_TO_SPLIT
     )
-    raw_chunks = splitter.split_text(text)
+    md_header_splits = splitter.split_text(text)
+    
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000, 
+        chunk_overlap=200
+    )
+    raw_chunks = char_splitter.split_documents(md_header_splits)
 
     chunks = []
     for chunk in raw_chunks:

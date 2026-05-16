@@ -80,7 +80,7 @@ def extract_triples(text: str) -> ExtractionResult | None:
     """
     try:
         response = llm_client.beta.chat.completions.parse(
-            model="openai/gpt-4o-mini",
+            model="google/gemini-2.0-flash-lite-preview-02-05:free",
             messages=[{"role": "user", "content": prompt}],
             response_format=ExtractionResult
         )
@@ -131,6 +131,14 @@ def upsert_to_neo4j(doc_title: str, chunk_id: int, chunk_text: str, extraction: 
 def main():
     print("🕸️ Neo4j Graph Extractor")
     print("=" * 50)
+    
+    # Create Full-Text Index for faster retrieval in UI
+    with driver.session() as session:
+        session.run("""
+        CREATE FULLTEXT INDEX entity_name_index IF NOT EXISTS 
+        FOR (e:Entity) ON EACH [e.name]
+        """)
+        print("✅ Neo4j Full-Text Index 'entity_name_index' verified.")
     
     files = indexer.load_markdown_files(INPUT_DIR)
     
