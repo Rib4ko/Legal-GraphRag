@@ -12,9 +12,10 @@ import streamlit as st
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 from qdrant_client import QdrantClient
-from openai import OpenAI
+import google.generativeai as genai
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
+import json
 
 class QueryEntities(BaseModel):
     entities: list[str] = Field(description="List of core legal entities, laws, or concepts mentioned in the query.")
@@ -80,13 +81,12 @@ def init_clients():
     else:
         st.warning("⚠️ Neo4j credentials missing in .env. Graph context will be disabled.")
     
-    or_token = os.getenv("OPENROUTER_API_KEY")
+    gemini_token = os.getenv("GEMINI_API_KEY")
     llm = None
-    if or_token:
-        llm = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=or_token,
-        )
+    if gemini_token:
+        genai.configure(api_key=gemini_token)
+        llm = genai.GenerativeModel('gemini-1.5-flash')
+        
     return hf, qd, llm, neo4j_driver
 
 hf_client, q_client, llm_client, neo4j_client = init_clients()
@@ -121,11 +121,8 @@ if query:
         if llm_client:
             try:
                 expansion_prompt = f"Rewrite this legal question into a comprehensive search query, expanding keywords and synonyms. Keep it in the same language. Return ONLY the rewritten query, nothing else.\nOriginal: {query}"
-                exp_res = llm_client.chat.completions.create(
-                    model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-                    messages=[{"role": "user", "content": expansion_prompt}]
-                )
-                expanded = exp_res.choices[0].message.content.strip()
+                exp_res = llm_client.generate_content(expansion_prompt)
+                expanded = exp_res.text.strip()
                 if expanded:
                     search_query = expanded
                     st.info(f"🔍 Expanded Search Query: {search_query}")
@@ -140,7 +137,7 @@ if query:
                 results = q_client.search(
                     collection_name=COLLECTION_NAME,
                     query_vector=query_vec,
-                    limit=3  # Show top 3 matches
+                    limit=8  # Show top 8 matches
                 )
                 
                 if results:
@@ -176,12 +173,15 @@ if query:
                             # 1. Extract entities from user query
                             try:
                                 extract_prompt = f"Extract the key legal entities and concepts from this query: {query}"
-                                ent_res = llm_client.beta.chat.completions.parse(
-                                    model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-                                    messages=[{"role": "user", "content": extract_prompt}],
-                                    response_format=QueryEntities
+                                ent_res = llm_client.generate_content(
+                                    extract_prompt,
+                                    generation_config=genai.GenerationConfig(
+                                        response_mime_type="application/json",
+                                        response_schema=QueryEntities
+                                    )
                                 )
-                                parsed_msg = ent_res.choices[0].message.parsed
+                                data = json.loads(ent_res.text)
+                                parsed_msg = QueryEntities(**data)
                                 query_entities = parsed_msg.entities if parsed_msg else []
                                 
                                 # 2. Query Neo4j for these entities
@@ -218,15 +218,14 @@ User Question: {query}"""
                         with st.chat_message("assistant"):
                             message_placeholder = st.empty()
                             try:
-                                response = llm_client.chat.completions.create(
-                                    model="meta-llama/llama-3.3-70b-instruct:free",
-                                    messages=[{"role": "user", "content": prompt}],
+                                response = llm_client.generate_content(
+                                    prompt,
                                     stream=True
                                 )
                                 full_response = ""
                                 for chunk in response:
-                                    if chunk.choices and chunk.choices[0].delta.content:
-                                        full_response += chunk.choices[0].delta.content
+                                    if chunk.text:
+                                        full_response += chunk.text
                                         # Use Markdown with RTL direction for Arabic text if needed
                                         message_placeholder.markdown(f"<div class='arabic-text' style='background-color: transparent; border: none; padding: 0;'>{full_response}▌</div>", unsafe_allow_html=True)
                                 message_placeholder.markdown(f"<div class='arabic-text' style='background-color: transparent; border: none; padding: 0;'>{full_response}</div>", unsafe_allow_html=True)

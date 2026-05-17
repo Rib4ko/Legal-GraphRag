@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
-from openai import OpenAI
+import google.generativeai as genai
 from pydantic import BaseModel, Field
 
 # Ensure we can import from local modules or just copy the needed ones
@@ -35,15 +35,15 @@ if NEO4J_URI and NEO4J_URI.startswith("neo4j+s://"):
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
-# OpenRouter / OpenAI config
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# Google AI Studio Config
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not all([NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD]):
     print("❌ Neo4j credentials missing in .env")
     sys.exit(1)
 
-if not OPENROUTER_API_KEY:
-    print("❌ OPENROUTER_API_KEY missing in .env")
+if not GEMINI_API_KEY:
+    print("❌ GEMINI_API_KEY missing in .env")
     sys.exit(1)
 
 INPUT_DIR = Path("data/ready_for_db")
@@ -62,10 +62,8 @@ class ExtractionResult(BaseModel):
     entities: list[Entity]
     relationships: list[Relationship]
 
-llm_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
@@ -83,12 +81,16 @@ def extract_triples(text: str) -> ExtractionResult | None:
     retries = 3
     for attempt in range(retries):
         try:
-            response = llm_client.beta.chat.completions.parse(
-                model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-                messages=[{"role": "user", "content": prompt}],
-                response_format=ExtractionResult
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=ExtractionResult
+                )
             )
-            return response.choices[0].message.parsed
+            # Parse the JSON response manually since generate_content returns text
+            data = json.loads(response.text)
+            return ExtractionResult(**data)
         except Exception as e:
             if "429" in str(e) or "rate limit" in str(e).lower():
                 print(f"  ⚠️ Rate limit hit. Waiting 20s (attempt {attempt+1}/{retries})...")
@@ -163,7 +165,7 @@ def main():
         
         for i, chunk in enumerate(chunks):
             chunk_id = indexer.make_point_id(filename, i)
-            if chunk_id in processed_chunks:
+            if str(chunk_id) in processed_chunks:
                 continue
                 
             text = chunk["content"]
@@ -178,6 +180,9 @@ def main():
                 # Save progress
                 with open(progress_file, "a") as f:
                     f.write(str(chunk_id) + "\n")
+                
+                # Artificial delay to avoid hammering the free API
+                time.sleep(3)
                 
     print("\n✅ Graph extraction complete!")
     driver.close()
