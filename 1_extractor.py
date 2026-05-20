@@ -204,9 +204,15 @@ def main():
         print("⚠️ No PDFs found from the API. Please verify network access to adala.justice.gov.ma.")
         return
         
+    import re
     # 2. Download and Process each PDF
     for url in pdf_urls:
-        filename = url.split("/")[-1]
+        raw_filename = url.split("/")[-1]
+        # Sanitize filename to prevent path traversal
+        filename = re.sub(r'[^a-zA-Z0-9.\-_]', '_', raw_filename).lstrip('.-')
+        if not filename:
+            filename = "document.pdf"
+        
         pdf_path = PDF_DIR / filename
         md_path = OUTPUT_DIR / f"{filename}.md"
         

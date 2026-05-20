@@ -12,10 +12,16 @@ import streamlit as st
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 from qdrant_client import QdrantClient
-import google.generativeai as genai
+from openai import OpenAI
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 import json
+import hashlib
+
+def make_point_id(filename: str, chunk_index: int) -> int:
+    key = f"{filename}::{chunk_index}"
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return int(digest, 16) % (2**63)
 
 class QueryEntities(BaseModel):
     entities: list[str] = Field(description="List of core legal entities, laws, or concepts mentioned in the query.")
@@ -32,17 +38,16 @@ st.set_page_config(
 # Custom CSS for right-to-left (RTL) Arabic text
 st.markdown("""
 <style>
-    .arabic-text {
+    /* Apply RTL globally to markdown elements to support Arabic text natively */
+    [data-testid="stMarkdownContainer"] p, 
+    [data-testid="stMarkdownContainer"] ul, 
+    [data-testid="stMarkdownContainer"] ol,
+    [data-testid="stChatMessageContent"] {
         direction: rtl;
         text-align: right;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         font-size: 18px;
         line-height: 1.6;
-        padding: 15px;
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        border-right: 4px solid #0056b3;
-        margin-bottom: 20px;
     }
     .score-badge {
         background-color: #e9ecef;
@@ -81,11 +86,13 @@ def init_clients():
     else:
         st.warning("⚠️ Neo4j credentials missing in .env. Graph context will be disabled.")
     
-    gemini_token = os.getenv("GEMINI_API_KEY")
+    groq_token = os.getenv("GROQ_API_KEY")
     llm = None
-    if gemini_token:
-        genai.configure(api_key=gemini_token)
-        llm = genai.GenerativeModel('gemini-1.5-flash')
+    if groq_token:
+        llm = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=groq_token,
+        )
         
     return hf, qd, llm, neo4j_driver
 
@@ -120,9 +127,14 @@ if query:
         # 0. Query Expansion
         if llm_client:
             try:
-                expansion_prompt = f"Rewrite this legal question into a comprehensive search query, expanding keywords and synonyms. Keep it in the same language. Return ONLY the rewritten query, nothing else.\nOriginal: {query}"
-                exp_res = llm_client.generate_content(expansion_prompt)
-                expanded = exp_res.text.strip()
+                exp_res = llm_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": "Rewrite the user's legal question into a comprehensive search query, expanding keywords and synonyms. Keep it in the same language. Return ONLY the rewritten query, nothing else."},
+                        {"role": "user", "content": query}
+                    ]
+                )
+                expanded = exp_res.choices[0].message.content.strip()
                 if expanded:
                     search_query = expanded
                     st.info(f"🔍 Expanded Search Query: {search_query}")
@@ -150,20 +162,48 @@ if query:
                         payload = hit.payload
                         score = hit.score
                         
+                        
                         # Reconstruct context
                         context = []
                         if "chapter" in payload: context.append(payload["chapter"])
                         if "article" in payload: context.append(payload["article"])
                         context_str = " > ".join(context) if context else "General Context"
                         
-                        contexts_for_llm.append(f"Source: {payload.get('source_file', 'Unknown')} | {context_str}\nText: {payload.get('text', '')}")
+                        # Expand context to include adjacent chunks
+                        filename = payload.get('source_file')
+                        chunk_idx = payload.get('chunk_index')
+                        expanded_text = payload.get('text', '')
+                        
+                        if filename and chunk_idx is not None:
+                            ids_to_fetch = []
+                            if chunk_idx > 0:
+                                ids_to_fetch.append(make_point_id(filename, chunk_idx - 1))
+                            ids_to_fetch.append(make_point_id(filename, chunk_idx + 1))
+                            
+                            try:
+                                surrounding = q_client.retrieve(
+                                    collection_name=COLLECTION_NAME,
+                                    ids=ids_to_fetch
+                                )
+                                prev_text = ""
+                                next_text = ""
+                                for p in surrounding:
+                                    if p.payload.get('chunk_index') == chunk_idx - 1:
+                                        prev_text = p.payload.get('text', '') + "\n\n"
+                                    elif p.payload.get('chunk_index') == chunk_idx + 1:
+                                        next_text = "\n\n" + p.payload.get('text', '')
+                                expanded_text = prev_text + expanded_text + next_text
+                            except Exception as e:
+                                pass # Fail gracefully if adjacent chunks don't exist
+                        
+                        contexts_for_llm.append(f"Source: {filename} | {context_str}\nText: {expanded_text}")
                         
                         with st.expander(f"Result {i} | {context_str}", expanded=False):
                             st.markdown(f"<div class='score-badge'>Relevance Score: {score:.4f}</div>", unsafe_allow_html=True)
-                            st.caption(f"Source: {payload.get('source_file', 'Unknown')}")
+                            st.caption(f"Source: {filename}")
                             
-                            # Display Arabic text with RTL styling
-                            st.markdown(f"<div class='arabic-text'>{payload.get('text', '')}</div>", unsafe_allow_html=True)
+                            # Display Arabic text (styled natively via CSS)
+                            st.markdown(expanded_text)
                             
                     if llm_client:
                         st.markdown("### 🤖 AI Analysis")
@@ -172,15 +212,16 @@ if query:
                         if neo4j_client:
                             # 1. Extract entities from user query
                             try:
-                                extract_prompt = f"Extract the key legal entities and concepts from this query: {query}"
-                                ent_res = llm_client.generate_content(
-                                    extract_prompt,
-                                    generation_config=genai.GenerationConfig(
-                                        response_mime_type="application/json",
-                                        response_schema=QueryEntities
-                                    )
+                                ent_res = llm_client.chat.completions.create(
+                                    model="llama-3.3-70b-versatile",
+                                    messages=[
+                                        {"role": "system", "content": "Extract the key legal entities and concepts from the user's query.\nRespond STRICTLY in raw JSON format matching this schema:\n{\n    \"entities\": [\"entity1\", \"entity2\", ...]\n}\nDo NOT wrap the JSON in markdown formatting or backticks."},
+                                        {"role": "user", "content": query}
+                                    ],
+                                    temperature=0.0,
+                                    response_format={"type": "json_object"}
                                 )
-                                data = json.loads(ent_res.text)
+                                data = json.loads(ent_res.choices[0].message.content)
                                 parsed_msg = QueryEntities(**data)
                                 query_entities = parsed_msg.entities if parsed_msg else []
                                 
@@ -196,39 +237,46 @@ if query:
                                         LIMIT 10
                                         """
                                         res = session.run(cypher, entities=query_entities)
-                                        graph_lines = [f"Graph Knowledge: '{record['entity']}' {record['relation']} '{record['related_entity']}'" for record in res]
+                                        graph_lines = [f"**{record['entity']}**  *{record['relation']}*  **{record['related_entity']}** (Score: {record['score']:.2f})" for record in res]
                                         if graph_lines:
                                             graph_context = "### Graph Relationships:\n" + "\n".join(graph_lines)
+                                            with st.expander("🕸️ Graph Knowledge Retrieved", expanded=True):
+                                                for line in graph_lines:
+                                                    st.markdown(f"- {line}")
                             except Exception as e:
                                 st.warning(f"Graph query failed: {e}")
 
                         context_block = "\n\n---\n\n".join(contexts_for_llm)
                         
-                        prompt = f"""You are a helpful Moroccan legal assistant. Answer the user's question based strictly on the provided legal contexts below. 
-If the answer is not contained in the contexts, say you don't know based on the provided documents. 
-Respond in the same language as the user's question (mostly Arabic or French).
+                        system_instruction = f"""You are a strict Moroccan legal assistant. Your ONLY task is to answer the user's question using EXACTLY the information provided in the legal contexts below. 
+You MUST NOT use any external knowledge, and you MUST NOT hallucinate numbers, rates, or laws that are not explicitly written in the provided text.
+If the exact answer is not contained in the contexts, you must reply: "I don't know based on the provided documents."
+Respond ONLY in pure, formal Arabic. Do not use any other languages (like French, Spanish, or English), not even for single words.
 
 Vector Search Contexts:
 {context_block}
 
-{graph_context}
-
-User Question: {query}"""
+{graph_context}"""
 
                         with st.chat_message("assistant"):
                             message_placeholder = st.empty()
                             try:
-                                response = llm_client.generate_content(
-                                    prompt,
+                                response = llm_client.chat.completions.create(
+                                    model="llama-3.3-70b-versatile",
+                                    messages=[
+                                        {"role": "system", "content": system_instruction},
+                                        {"role": "user", "content": query}
+                                    ],
+                                    temperature=0.0,
                                     stream=True
                                 )
                                 full_response = ""
                                 for chunk in response:
-                                    if chunk.text:
-                                        full_response += chunk.text
-                                        # Use Markdown with RTL direction for Arabic text if needed
-                                        message_placeholder.markdown(f"<div class='arabic-text' style='background-color: transparent; border: none; padding: 0;'>{full_response}▌</div>", unsafe_allow_html=True)
-                                message_placeholder.markdown(f"<div class='arabic-text' style='background-color: transparent; border: none; padding: 0;'>{full_response}</div>", unsafe_allow_html=True)
+                                    if chunk.choices and chunk.choices[0].delta.content:
+                                        full_response += chunk.choices[0].delta.content
+                                        # Use standard Markdown, styled natively via CSS
+                                        message_placeholder.markdown(full_response + "▌")
+                                message_placeholder.markdown(full_response)
                             except Exception as e:
                                 st.error(f"LLM Generation failed: {e}")
                 else:

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
-import google.generativeai as genai
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 # Ensure we can import from local modules or just copy the needed ones
@@ -35,18 +35,20 @@ if NEO4J_URI and NEO4J_URI.startswith("neo4j+s://"):
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
-# Google AI Studio Config
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Groq Config
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not all([NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD]):
     print("❌ Neo4j credentials missing in .env")
     sys.exit(1)
 
-if not GEMINI_API_KEY:
-    print("❌ GEMINI_API_KEY missing in .env")
+if not GROQ_API_KEY:
+    print("❌ GROQ_API_KEY missing in .env")
     sys.exit(1)
 
 INPUT_DIR = Path("data/ready_for_db")
+
+from typing import Literal
 
 # Pydantic schemas for structured extraction
 class Entity(BaseModel):
@@ -56,45 +58,52 @@ class Entity(BaseModel):
 class Relationship(BaseModel):
     source_entity: str = Field(description="Name of the source entity")
     target_entity: str = Field(description="Name of the target entity")
-    relation_type: str = Field(description="Type of relationship: REFERENCES, MODIFIES, SUPERSEDES, or MENTIONS")
+    relation_type: Literal["REFERENCES", "MODIFIES", "SUPERSEDES", "MENTIONS"] = Field(
+        description="Type of relationship MUST be one of: REFERENCES, MODIFIES, SUPERSEDES, or MENTIONS"
+    )
 
 class ExtractionResult(BaseModel):
     entities: list[Entity]
     relationships: list[Relationship]
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+llm_client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=GROQ_API_KEY,
+)
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
 import time
 
 def extract_triples(text: str) -> ExtractionResult | None:
-    prompt = f"""
-    Analyze the following Moroccan legal text and extract key entities and relationships.
+    system_instruction = """
+    Analyze the provided Moroccan legal text and extract key entities and relationships.
     Entities should be specific named concepts, organizations, people, or laws.
     Relationships MUST be one of: REFERENCES, MODIFIES, SUPERSEDES, MENTIONS.
     
-    Text:
-    {text}
+    Respond STRICTLY in JSON format matching this schema:
+    {
+        "entities": [{"name": "...", "type": "..."}],
+        "relationships": [{"source_entity": "...", "target_entity": "...", "relation_type": "..."}]
+    }
     """
-    retries = 3
+    retries = 10
     for attempt in range(retries):
         try:
-            response = model.generate_content(
-                prompt,
-                generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    response_schema=ExtractionResult
-                )
+            response = llm_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": f"Text:\n{text}"}
+                ],
+                response_format={"type": "json_object"}
             )
-            # Parse the JSON response manually since generate_content returns text
-            data = json.loads(response.text)
+            data = json.loads(response.choices[0].message.content)
             return ExtractionResult(**data)
         except Exception as e:
             if "429" in str(e) or "rate limit" in str(e).lower():
-                print(f"  ⚠️ Rate limit hit. Waiting 20s (attempt {attempt+1}/{retries})...")
-                time.sleep(20)
+                print(f"  ⚠️ Rate limit hit. Waiting 60s (attempt {attempt+1}/{retries})...")
+                time.sleep(60)
             else:
                 print(f"  ⚠️ Extraction failed: {e}")
                 return None
@@ -182,7 +191,7 @@ def main():
                     f.write(str(chunk_id) + "\n")
                 
                 # Artificial delay to avoid hammering the free API
-                time.sleep(3)
+                time.sleep(4)
                 
     print("\n✅ Graph extraction complete!")
     driver.close()

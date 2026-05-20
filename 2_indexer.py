@@ -97,9 +97,16 @@ def load_markdown_files(directory: Path) -> list[tuple[str, str]]:
         print(f"  ⚠️ No .md files found in {directory}")
         return []
     result = []
+    import re
     for f in files:
         content = f.read_text(encoding="utf-8")
         if content.strip():
+            # Clean OCR artifacts for better header chunking
+            content = re.sub(r'م\s*ال\s*ادة\s*(\d+)', r'## المادة \1', content)
+            content = re.sub(r'ال\s*م\s*ادة\s*(\d+)', r'## المادة \1', content)
+            content = re.sub(r'ف\s*ص\s*ل\s*(\d+)', r'## الفصل \1', content)
+            content = re.sub(r'ال\s*ف\s*ص\s*ل\s*(\d+)', r'## الفصل \1', content)
+            
             result.append((f.name, content))
             print(f"  📄 Loaded: {f.name} ({len(content)} chars)")
     return result
