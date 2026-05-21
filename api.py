@@ -107,7 +107,7 @@ async def search_endpoint(request: SearchRequest):
             print(f"Query expansion failed: {e}")
 
     # 2. Vector Search (using Qdrant)
-    query_vec = get_embedding(search_query)
+    query_vec = get_embedding(query)
     if query_vec is None:
         raise HTTPException(status_code=500, detail="Failed to generate query embeddings.")
 
@@ -227,9 +227,10 @@ async def search_endpoint(request: SearchRequest):
     answer = "No contexts found to answer your question."
     if contexts_for_llm:
         context_block = "\n\n---\n\n".join(contexts_for_llm)
-        system_instruction = f"""You are a strict Moroccan legal assistant. Your ONLY task is to answer the user's question using EXACTLY the information provided in the legal contexts below. 
+        system_instruction = f"""You are a strict Moroccan legal assistant. Your ONLY task is to answer the user's question based on the legal contexts below. 
 You MUST NOT use any external knowledge, and you MUST NOT hallucinate numbers, rates, or laws that are not explicitly written in the provided text.
-If the exact answer is not contained in the contexts, you must reply: "لا أتوفر على معلومات كافية للإجابة بناءً على الوثائق المتاحة."
+However, you MAY infer lists, fields, or form requirements from fragmented text, dotted lines (e.g., .......), or broken formatting if it logically answers the question based on the context.
+If the answer cannot be reasonably deduced from the contexts, you must reply: "لا أتوفر على معلومات كافية للإجابة بناءً على الوثائق المتاحة."
 Respond ONLY in pure, formal Arabic. Do not use any other languages (like French, Spanish, or English), not even for single words.
 
 Vector Search Contexts:
