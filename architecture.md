@@ -1,64 +1,36 @@
-# Moroccan LegalTech GraphRAG Architecture
+# System Architecture: Moroccan Legal GraphRAG
 
-This document outlines the architecture, data flow, and components of the Moroccan LegalTech GraphRAG project. The system is designed to scrape Moroccan legal texts, process them into both semantic vector embeddings and a knowledge graph, and provide a secure, hallucination-free Search UI using large language models.
+The Moroccan Legal GraphRAG project utilizes a robust hybrid retrieval architecture that combines Semantic Vector Search with Knowledge Graph exploration to effectively map and retrieve Moroccan Legal documents without hallucination.
 
-## 🏗️ System Architecture
+## The Data Pipeline
 
-The pipeline is split into four distinct phases: Data Ingestion, Vector Indexing, Graph Extraction, and the User Interface.
+### 1. Document Extraction (`1_extractor.py` & `run_image_ocr.py`)
+- Raw legal texts, PDFs, and images are ingested.
+- The **Ain OCR Engine** (based on Advanced PP-Structure) handles complex layout analysis and accurate Arabic text extraction from images and scanned documents.
+- Basic text extraction is handled for digital PDFs.
+- Output is structured as Markdown chunks for indexing, pending human review.
 
-### Phase 1: Data Ingestion & OCR (`1_extractor.py`)
-This script acts as the entry point for the pipeline, responsible for acquiring the raw legal documents.
-* **Scraping:** Connects to the Moroccan Ministry of Justice (Adala) portal API to recursively discover and download legal PDFs.
-* **Text Extraction:** Uses `PyMuPDF` (`fitz`) to extract text from the PDFs.
-* **Arabic Cleaning:** Moroccan legal PDFs often have broken Arabic text (disconnected or reversed). The script uses `arabic_reshaper` and `bidi` to fix the text layout.
-* **Output:** Saves the clean text as Markdown (`.md`) files in the `data/ready_for_db/` directory.
+### 2. Vector Indexing (`2_indexer.py`)
+- **Model:** `BAAI/bge-m3` via HuggingFace is used to generate high-dimensional text embeddings for each document chunk.
+- **Storage:** Chunks and metadata are upserted into **Qdrant**, a local vector database, enabling ultra-fast, dense semantic similarity searches.
 
-### Phase 2: Vector Database Indexer (`2_indexer.py`)
-This script converts the flat Markdown files into a searchable semantic database.
-* **OCR Artifact Cleaning:** Uses Regex to fix broken markdown headers (e.g. converting `م ال ادة 8` to `## المادة 8`) to ensure accurate document chunking.
-* **Chunking:** Uses LangChain's `MarkdownHeaderTextSplitter` to split the document logically by legal Chapters and Articles, followed by a `RecursiveCharacterTextSplitter`.
-* **Embedding:** Uses the HuggingFace Serverless API (`BAAI/bge-m3` model) to generate 1024-dimensional embeddings for each chunk.
-* **Storage:** Upserts the chunks and embeddings into a local **Qdrant** database, utilizing deterministic IDs to prevent duplication on re-runs.
+### 3. Knowledge Graph Extraction (`5_graph_extractor.py`)
+- **LLM-based Extraction:** Llama-3.3-70b processes chunks to extract core Legal Entities (e.g., ministries, laws, decrees) and relationships (e.g., MENTIONS, MODIFIES, SUPERSEDES).
+- **Storage:** Extracted data is ingested into **Neo4j** (AuraDB Cloud). This maps the explicit connections and cross-references between different Moroccan legal doctrines.
 
-### Phase 2.5: Knowledge Graph Extraction (`5_graph_extractor.py`)
-This script builds the semantic relationships between legal entities.
-* **Entity Extraction:** Reads the same Markdown chunks from `data/ready_for_db/`.
-* **LLM Processing:** Uses Groq (`llama-3.3-70b-versatile`) to extract structured entities (e.g., Ministries, Laws, Penalties) and relationships (e.g., `REGULATES`, `SUPERSEDES`). It uses `Literal` types to strictly validate relationship schemas and prevent data poisoning.
-* **Storage:** Upserts these nodes and relationships into a **Neo4j** Graph Database.
+## The Search Pipeline (`api.py`)
 
-### Phase 3: The Search Engine UI (`4_search_ui.py`)
-This is the front-end Streamlit application that users interact with.
-* **Query Expansion:** The user's query is first sent to an LLM to generate synonyms and expand the search scope.
-* **Vector Search:** The query is embedded (using HF) and sent to Qdrant to find the Top 8 most semantically relevant legal chunks.
-* **Context Expansion (Parent Document Retrieval):** The system dynamically fetches the adjacent chunks (`chunk - 1` and `chunk + 1`) from Qdrant to ensure no information is accidentally truncated.
-* **Graph Search:** The system extracts entities from the user's query and searches the Neo4j database (using a Cypher full-text index query) to pull in related graph knowledge.
-* **LLM Synthesis:** The expanded vector context and the graph context are fed to the Llama-3 model (`temperature=0.0`) with a highly restrictive system prompt forcing it to answer *strictly* in formal Arabic without any hallucinations.
+When a user submits a legal query via the React interface, it follows a deterministic pipeline:
 
----
+1. **Query Expansion:** The original query is sent to Groq (Llama-3.3) to expand keywords and synonyms, optimizing the graph search scope.
+2. **Vector Retrieval:** The *original, strict query* is embedded and queried against **Qdrant** to retrieve the Top-K most semantically relevant text chunks.
+3. **Context Window Expansion:** For each retrieved chunk, the API automatically retrieves the chunk immediately before and after it (`chunk_index - 1` and `chunk_index + 1`) to provide the LLM with full context.
+4. **Graph Extraction:** The expanded query is parsed for entities. These entities are mapped against **Neo4j** using Cypher queries to find related nodes and paths, providing a relationship map.
+5. **RAG Synthesis:** Both the expanded vector texts and the graph relationship contexts are fed into the LLM with a strict **Anti-Hallucination prompt**, resulting in a highly accurate, formal Arabic response.
 
-## 📂 Directory Structure
+## Frontend UI (`frontend/src/App.jsx`)
 
-```text
-/
-├── 1_extractor.py         # Phase 1: Downloads and extracts PDFs
-├── 2_indexer.py           # Phase 2: Chunks and embeds text into Qdrant
-├── 4_search_ui.py         # Phase 3: Streamlit UI and LLM query processing
-├── 5_graph_extractor.py   # Phase 2.5: Extracts Entities/Relations to Neo4j
-├── architecture.md        # You are here!
-├── evaluation_questions.md# List of test questions to evaluate RAG performance
-├── qdrant_guide.md        # Instructions for the vector DB setup
-├── .env                   # API Keys (HuggingFace, Neo4j, Groq)
-│
-├── data/
-│   ├── raw_pdfs/          # Original PDFs scraped from Adala
-│   ├── ready_for_db/      # Cleaned Markdown files ready for indexing
-│   └── qdrant_legal_db/   # Local Qdrant vector database storage
-│
-└── src/ingestion/         # (Future/Experimental) Advanced "Ain OCR" engine using PaddleOCR
-    └── run_image_ocr.py   
-```
-
-## 🔒 Security & Performance Features
-* **Anti-Hallucination:** API calls are locked to `temperature=0.0` and system prompts explicitly ban outside knowledge or alternative languages.
-* **XSS Prevention:** Streamlit UI utilizes CSS for Right-to-Left (RTL) alignment rather than injecting unsafe HTML (`unsafe_allow_html=False`).
-* **Path Traversal Protection:** Filenames generated from scraped URLs are sanitized using Python Regex in `1_extractor.py`.
+The interface is built with Vite, React, and Tailwind CSS.
+- Designed with an **"Institutional Tech"** aesthetic (Deep Navy, Legal Gold).
+- Uses **GSAP animations** to progressively reveal the search pipeline to the user step-by-step (Query Expansion -> Vectors -> Graph -> Answer), visualizing the AI "thinking" process.
+- Features a Canvas-based interactive hero animation representing the Knowledge Graph.
