@@ -26,7 +26,8 @@ By combining dense vector embeddings (HuggingFace BGE-M3) with a robust Knowledg
 │   │   ├── App.jsx            # Main application logic and UI pipeline
 │   │   └── index.css          # Tailwind CSS configuration and theming
 ├── api.py                     # FastAPI backend serving the GraphRAG pipeline
-├── 1_extractor.py             # OCR/PDF data extraction pipeline
+├── 1_extractor.py             # Basic PDF scraping pipeline
+├── run_image_ocr.py           # Ain OCR Engine (Advanced PP-Structure for Arabic OCR)
 ├── 2_indexer.py               # Vector database indexer (Qdrant)
 ├── 5_graph_extractor.py       # Knowledge Graph entity/relation extractor (Neo4j)
 └── docs/                      # Additional documentation
