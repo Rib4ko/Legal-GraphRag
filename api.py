@@ -176,7 +176,7 @@ async def search_endpoint(request: SearchRequest):
             ent_res = llm_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {"role": "system", "content": "Extract the key legal entities and concepts from the user's query.\nRespond STRICTLY in raw JSON format matching this schema:\n{\n    \"entities\": [\"entity1\", \"entity2\", ...]\n}\nDo NOT wrap the JSON in markdown formatting or backticks."},
+                    {"role": "system", "content": "Extract the key legal entities and concepts from the user's query. ALWAYS translate them to Arabic because the database only contains Arabic entities.\nRespond STRICTLY in raw JSON format matching this schema:\n{\n    \"entities\": [\"entity1\", \"entity2\", ...]\n}\nDo NOT wrap the JSON in markdown formatting or backticks."},
                     {"role": "user", "content": query}
                 ],
                 temperature=0.0,
@@ -231,7 +231,7 @@ async def search_endpoint(request: SearchRequest):
 You MUST NOT use any external knowledge, and you MUST NOT hallucinate numbers, rates, or laws that are not explicitly written in the provided text.
 However, you MAY infer lists, fields, or form requirements from fragmented text, dotted lines (e.g., .......), or broken formatting if it logically answers the question based on the context.
 If the answer cannot be reasonably deduced from the contexts, you must reply: "لا أتوفر على معلومات كافية للإجابة بناءً على الوثائق المتاحة."
-Respond ONLY in pure, formal Arabic. Do not use any other languages (like French, Spanish, or English), not even for single words.
+Respond in the SAME LANGUAGE that the user used to ask the question (e.g., if asked in French, respond in French; if asked in Arabic, respond in Arabic). Use formal, professional terminology.
 
 Vector Search Contexts:
 {context_block}
