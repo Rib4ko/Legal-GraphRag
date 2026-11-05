@@ -20,7 +20,8 @@ import {
   ChevronUp,
   AlertCircle,
   CornerDownLeft,
-  ArrowDown
+  ArrowDown,
+  Languages
 } from "lucide-react";
 import gsap from "gsap";
 import HeroAnimation from "./components/HeroAnimation";
@@ -31,8 +32,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
-  // Results State
   const [answer, setAnswer] = useState("");
+  const [translatedAnswer, setTranslatedAnswer] = useState("");
+  const [isTranslating, setIsTranslating] = useState(false);
   const [expandedQuery, setExpandedQuery] = useState("");
   const [hits, setHits] = useState([]);
   const [graphRelationships, setGraphRelationships] = useState([]);
@@ -94,6 +96,27 @@ export default function App() {
     }));
   };
 
+  const handleTranslate = async () => {
+    if (!answer) return;
+    setIsTranslating(true);
+    setTranslatedAnswer("");
+    try {
+      const response = await fetch("http://localhost:8000/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: answer }),
+      });
+      if (!response.ok) throw new Error("Translation failed");
+      const data = await response.json();
+      setTranslatedAnswer(data.translated_text);
+    } catch (err) {
+      console.error(err);
+      setTranslatedAnswer("Error: Translation failed. Please try again.");
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     if (!searchQuery.trim()) return;
@@ -102,6 +125,7 @@ export default function App() {
     setError(null);
     setRevealStep(0);
     setAnswer("");
+    setTranslatedAnswer("");
     setExpandedQuery("");
     setHits([]);
     setGraphRelationships([]);
@@ -842,6 +866,45 @@ export default function App() {
                     >
                       {answer}
                     </div>
+
+                    {/* Translation Button */}
+                    {!translatedAnswer && (
+                      <div className="mt-6 flex justify-start" dir="ltr">
+                        <button
+                          onClick={handleTranslate}
+                          disabled={isTranslating}
+                          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-50 text-legalNavy border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all font-semibold text-xs shadow-sm disabled:opacity-50"
+                        >
+                          {isTranslating ? (
+                            <>
+                              <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-300 border-t-legalNavy animate-spin" />
+                              Translating to English...
+                            </>
+                          ) : (
+                            <>
+                              <Languages size={14} />
+                              Translate to English
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Translated Text Block */}
+                    {translatedAnswer && (
+                      <div className="mt-8 text-left border-t border-slate-100 pt-6" dir="ltr">
+                        <h3 className="font-serif text-lg font-bold text-legalNavy mb-3 flex items-center gap-2">
+                          <Languages size={16} className="text-legalGold" />
+                          English Translation
+                        </h3>
+                        <div 
+                          className="text-slate-700 text-sm md:text-base leading-loose font-sans bg-slate-50 p-5 rounded-2xl border border-slate-100"
+                          style={{ whiteSpace: "pre-line" }}
+                        >
+                          {translatedAnswer}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Metadata inside card */}

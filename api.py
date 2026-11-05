@@ -259,6 +259,29 @@ Vector Search Contexts:
         "graph_relationships": graph_relationships
     }
 
+class TranslateRequest(BaseModel):
+    text: str = Field(..., description="The Arabic text to translate to English.")
+
+@app.post("/api/translate")
+async def translate_endpoint(request: TranslateRequest):
+    if not llm_client:
+        raise HTTPException(status_code=500, detail="LLM client not configured.")
+    
+    system_instruction = "You are an expert legal translator. Translate the provided Moroccan legal Arabic text into highly formal, professional English. Preserve all legal nuances and do not add any external commentary. Just output the translation."
+    
+    try:
+        response = llm_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": request.text}
+            ],
+            temperature=0.0
+        )
+        return {"translated_text": response.choices[0].message.content.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "neo4j_connected": neo4j_client is not None, "llm_connected": llm_client is not None}
