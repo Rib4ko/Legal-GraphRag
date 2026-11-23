@@ -1,70 +1,100 @@
-# Moroccan Legal GraphRAG
+# Moroccan Legal GraphRAG ⚖️🧠
 
-An advanced AI-powered semantic search and knowledge graph engine for Moroccan legal texts, providing hallucination-free answers using vector embeddings and Neo4j.
+[![CI Verification](https://github.com/Rib4ko/Legal-GraphRag/actions/workflows/ci.yml/badge.svg)](https://github.com/Rib4ko/Legal-GraphRag/actions/workflows/ci.yml)
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-19.0-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+[![Neo4j](https://img.shields.io/badge/Knowledge_Graph-Neo4j-008CC1.svg?logo=neo4j&logoColor=white)](https://neo4j.com/)
+[![Qdrant](https://img.shields.io/badge/Vector_DB-Qdrant-DC2626.svg?logo=qdrant&logoColor=white)](https://qdrant.tech/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 🚀 Overview
+An advanced, hybrid AI retrieval engine for Moroccan jurisprudence and statutory texts. Combines high-dimensional semantic vector search (`BAAI/bge-m3`) with knowledge graph relationship discovery (`Neo4j`) and multilingual translation into an institutional-grade legal tech console.
 
-Moroccan Legal GraphRAG is designed to be a highly advanced digital instrument used by top-tier lawyers and legal tech professionals. It blends the strict, determinative nature of a traditional supreme court with the cutting-edge capabilities of a modern AI lab. 
+---
 
-By combining dense vector embeddings (HuggingFace BGE-M3) with a robust Knowledge Graph (Neo4j), the system uncovers hidden relationships between laws, ministries, and entities. A strict anti-hallucination framework ensures factual accuracy, strictly anchoring LLM answers to retrieved documents.
+## 🌟 Key Features
 
-## 🛠️ Tech Stack
+- **🔍 Dual-Channel Hybrid Retrieval:** Simultaneously queries vector space via Qdrant for semantic relevance and Neo4j knowledge graphs for multi-hop legal references.
+- **🛡️ Strict Anti-Hallucination Framework:** Prompts enforce factual grounding strictly within retrieved statutory provisions.
+- **🌐 Real-Time Arabic-to-English Translation:** Integrated neural translation pipeline for Moroccan Arabic legal texts with dedicated UI toggle.
+- **⚡ Context Window Expansion:** Automatically pulls neighboring clauses (`chunk_index ± 1`) to preserve full legislative articles.
+- **✨ Progressive AI Reveal Interface:** Institutional UI built with React 19, Tailwind CSS, and GSAP illustrating each step of graph expansion and answer synthesis.
 
-- **Frontend:** React 19, Vite, Tailwind CSS v3.4.17, GSAP 3 (ScrollTrigger, Animations), Lucide React
-- **Backend API:** FastAPI, Python 3.12
-- **Vector Database:** Qdrant (Local)
-- **Knowledge Graph:** Neo4j (AuraDB Cloud)
-- **Embeddings:** `BAAI/bge-m3` via HuggingFace Inference Client
-- **LLM Synthesis:** `llama-3.3-70b-versatile` via Groq
+---
 
-## 📦 Project Structure
+## 📐 System Architecture
 
+```mermaid
+flowchart TD
+    subgraph IN["1. INGESTION & PARSING"]
+        PDF["📄 Statutory Acts & Judicial Decrees"] --> OCR["Ain OCR Engine\n(PP-Structure Layout)"]
+        OCR --> CHUNK["Markdown Chunker & AST Normalizer"]
+    end
+
+    subgraph STORE["2. DUAL KNOWLEDGE STORES"]
+        CHUNK -->|BGE-M3 Embeddings| VEC[("Vector DB: Qdrant\n(Dense Semantic Space)")]
+        CHUNK -->|Llama Entity Extractor| GRAPH[("Knowledge Graph: Neo4j\n(Entities & Legal Relations)")]
+    end
+
+    subgraph QUERY["3. RAG PIPELINE & SYNTHESIS"]
+        Q["User Legal Inquiry"] --> EXP["Query Expansion (Groq / Llama-3.3)"]
+        EXP -->|Semantic Top-K| VEC
+        EXP -->|Cypher Subgraph Query| GRAPH
+        VEC --> CTX["Neighbor Chunk Expansion (±1)"]
+        CTX --> SYNTH["Synthesis Engine (Anti-Hallucination Guardrails)"]
+        GRAPH --> SYNTH
+    end
+
+    subgraph OUT["4. CLIENT INTERACTION"]
+        SYNTH --> RES["Verified Arabic Response"]
+        RES --> TRANS["Neural Legal Translation (English)"]
+        RES --> UI["Interactive Institutional Console"]
+    end
 ```
-├── frontend/                  # Vite + React 19 Frontend application
-│   ├── src/                   
-│   │   ├── components/        # React components (e.g., HeroAnimation)
-│   │   ├── App.jsx            # Main application logic and UI pipeline
-│   │   └── index.css          # Tailwind CSS configuration and theming
-├── api.py                     # FastAPI backend serving the GraphRAG pipeline
-├── 1_extractor.py             # Basic PDF scraping pipeline
-├── run_image_ocr.py           # Ain OCR Engine (Advanced PP-Structure for Arabic OCR)
-├── 2_indexer.py               # Vector database indexer (Qdrant)
-├── 5_graph_extractor.py       # Knowledge Graph entity/relation extractor (Neo4j)
-└── docs/                      # Additional documentation
-```
 
-## ⚙️ Quick Start
+---
 
-### 1. Backend Setup
-Install the Python dependencies and configure your `.env` file in the root directory:
-```env
-HF_TOKEN=hf_your_token
-GROQ_API_KEY=gsk_your_token
+## 🚀 Quickstart & Setup
+
+### 1. Prerequisites
+- Python 3.11+
+- Node.js 20+
+- Running Qdrant and Neo4j instances
+
+### 2. Backend Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Rib4ko/Legal-GraphRag.git
+cd Legal-GraphRag
+
+# Create environment configuration
+cat <<EOF > .env
+HF_TOKEN=hf_your_huggingface_token
+GROQ_API_KEY=gsk_your_groq_key
 NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your_password
+EOF
+
+# Install dependencies using uv or pip
+pip install -e .
+
+# Launch FastAPI ASGI server
+uvicorn api:app --reload --port 8000
 ```
 
-Start the FastAPI server:
-```bash
-uv run uvicorn api:app --reload --port 8000
-```
+### 3. Frontend Installation
 
-### 2. Frontend Setup
-Navigate to the `frontend` folder, install dependencies, and start the development server:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-## ✨ Key Features
+Navigate to `http://localhost:3000` to interact with the legal search console.
 
-- **Semantic Vector Search:** Deep understanding of legal nuances in Arabic.
-- **GraphRAG Expansion:** Resolves complex multi-hop entity relationships using Cypher queries.
-- **Anti-Hallucination Guardrails:** Strict prompt engineering ensures the LLM admits "I don't know" when documents lack sufficient context.
-- **Progressive UI Reveal:** A sleek, animated dashboard that progressively reveals LLM Query Expansion -> Vector Retrieval -> Graph Extraction -> Final Synthesis.
+---
 
-## 📖 Architecture Details
-
-For a detailed dive into the architecture and pipeline flow, please refer to [ARCHITECTURE.md](ARCHITECTURE.md).
+## 📄 License
+This repository is open-source and released under the [MIT License](LICENSE).
