@@ -25,12 +25,14 @@ import {
 } from "lucide-react";
 import gsap from "gsap";
 import HeroAnimation from "./components/HeroAnimation";
+import { DEMO_DATA } from "./demoData";
 
 export default function App() {
   const [isAppActive, setIsAppActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
   
   const [answer, setAnswer] = useState("");
   const [translatedAnswer, setTranslatedAnswer] = useState("");
@@ -110,8 +112,8 @@ export default function App() {
       const data = await response.json();
       setTranslatedAnswer(data.translated_text);
     } catch (err) {
-      console.error(err);
-      setTranslatedAnswer("Error: Translation failed. Please try again.");
+      console.warn("Backend unavailable for translation, showing demo translation:", err);
+      setTranslatedAnswer(DEMO_DATA.default.translated_text);
     } finally {
       setIsTranslating(false);
     }
@@ -123,6 +125,7 @@ export default function App() {
 
     setLoading(true);
     setError(null);
+    setIsDemoMode(false);
     setRevealStep(0);
     setAnswer("");
     setTranslatedAnswer("");
@@ -130,6 +133,8 @@ export default function App() {
     setHits([]);
     setGraphRelationships([]);
     setExpandedRelations({});
+
+    let data;
 
     try {
       const response = await fetch("http://localhost:8000/api/search", {
@@ -144,37 +149,36 @@ export default function App() {
         throw new Error(`Server returned status ${response.status}`);
       }
 
-      const data = await response.json();
-
-      // Store data in state
-      setAnswer(data.answer);
-      setExpandedQuery(data.expanded_query);
-      setHits(data.hits || []);
-      setGraphRelationships(data.graph_relationships || []);
-      
-      // Stop general loading and start sequential reveal animation
-      setLoading(false);
-      
-      // Step 1: Expanded Question
-      setRevealStep(1);
-      
-      // Step 2: Vector Results (after 800ms)
-      await new Promise(r => setTimeout(r, 800));
-      setRevealStep(2);
-      
-      // Step 3: Graph Results (after 800ms)
-      await new Promise(r => setTimeout(r, 800));
-      setRevealStep(3);
-      
-      // Step 4: Final Synthesis Answer (after 800ms)
-      await new Promise(r => setTimeout(r, 800));
-      setRevealStep(4);
-
+      data = await response.json();
     } catch (err) {
-      console.error(err);
-      setError("Failed to query the backend database. Make sure 'uv run uvicorn api:app' is running on port 8000.");
-      setLoading(false);
+      console.warn("Backend/DB unavailable, activating demo mode:", err);
+      setIsDemoMode(true);
+      data = DEMO_DATA.default;
     }
+
+    // Store data in state
+    setAnswer(data.answer);
+    setExpandedQuery(data.expanded_query);
+    setHits(data.hits || []);
+    setGraphRelationships(data.graph_relationships || []);
+    
+    // Stop general loading and start sequential reveal animation
+    setLoading(false);
+    
+    // Step 1: Expanded Question
+    setRevealStep(1);
+    
+    // Step 2: Vector Results (after 800ms)
+    await new Promise(r => setTimeout(r, 800));
+    setRevealStep(2);
+    
+    // Step 3: Graph Results (after 800ms)
+    await new Promise(r => setTimeout(r, 800));
+    setRevealStep(3);
+    
+    // Step 4: Final Synthesis Answer (after 800ms)
+    await new Promise(r => setTimeout(r, 800));
+    setRevealStep(4);
   };
 
   return (
@@ -604,6 +608,19 @@ export default function App() {
 
           {/* Search bar card */}
           <div className="bg-white border border-borderLight rounded-3xl p-6 md:p-8 shadow-sm mb-12 text-left">
+            {isDemoMode && (
+              <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider font-mono">
+                    Live Database Offline / Demo Mode Active
+                  </h4>
+                  <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                    The backend vector/graph database is currently turned off to conserve cloud resources. Showing interactive pre-cached statutory synthesis and graph demonstration data below.
+                  </p>
+                </div>
+              </div>
+            )}
             <h3 className="font-serif text-lg font-bold text-legalNavy mb-3">Ask your legal question</h3>
             <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
               <div className="relative flex-grow">
